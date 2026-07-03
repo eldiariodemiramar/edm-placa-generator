@@ -21,21 +21,28 @@ ASSET_FILES = {
     'dib-logo.png':           f'{RECURSOS}/dib-logo.png',
 }
 
-def download_assets():
-    for filename, url in ASSET_FILES.items():
-        path = os.path.join(ASSETS_DIR, filename)
-        if not os.path.exists(path):
-            try:
-                r = requests.get(url, timeout=15)
-                r.raise_for_status()
-                with open(path, 'wb') as f:
-                    f.write(r.content)
-                print(f'Downloaded: {filename}')
-            except Exception as e:
-                print(f'Failed to download {filename}: {e}')
+def ensure_asset(filename):
+    """Descarga un asset si no existe localmente."""
+    path = os.path.join(ASSETS_DIR, filename)
+    if not os.path.exists(path):
+        url = ASSET_FILES[filename]
+        print(f'Downloading {filename} from {url}...')
+        r = requests.get(url, timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
+        r.raise_for_status()
+        with open(path, 'wb') as f:
+            f.write(r.content)
+        print(f'OK: {filename} ({len(r.content)} bytes)')
+    return path
+
+def ensure_all_assets():
+    for filename in ASSET_FILES:
+        try:
+            ensure_asset(filename)
+        except Exception as e:
+            print(f'Warning: could not download {filename}: {e}')
 
 def asset(filename):
-    return os.path.join(ASSETS_DIR, filename)
+    return ensure_asset(filename)
 
 W, H = 1080, 1440
 AZUL = (1, 65, 109)
@@ -98,7 +105,7 @@ def generar_placa(titulo, cintillo, foto_url, is_dib=False, crop_offset=0.5):
     font_path  = asset('LeagueSpartan-Bold.ttf')
     logo_path  = asset('Logo-DDM-Blanco-01.png')
     redes_path = asset('pie-redes.png')
-    dib_path   = asset('dib-logo.png')
+    dib_path   = os.path.join(ASSETS_DIR, 'dib-logo.png')
 
     headers = {'User-Agent': 'Mozilla/5.0 (compatible; EDMPublisher/1.0)'}
     r = requests.get(foto_url, headers=headers, timeout=15)
@@ -120,12 +127,16 @@ def generar_placa(titulo, cintillo, foto_url, is_dib=False, crop_offset=0.5):
     foto_r = foto_r.crop((x_off, 0, x_off + W, foto_h))
     img.paste(foto_r, (0, 0))
 
-    if is_dib and os.path.exists(dib_path):
-        dib = remove_white_bg(Image.open(dib_path))
-        dib_h = 86
-        dib_w = int(dib_h * dib.width / dib.height)
-        dib_r = dib.resize((dib_w, dib_h), Image.LANCZOS)
-        img.paste(dib_r, (40, 40), dib_r)
+    if is_dib:
+        try:
+            dib_path = asset('dib-logo.png')
+            dib = remove_white_bg(Image.open(dib_path))
+            dib_h = 86
+            dib_w = int(dib_h * dib.width / dib.height)
+            dib_r = dib.resize((dib_w, dib_h), Image.LANCZOS)
+            img.paste(dib_r, (40, 40), dib_r)
+        except Exception as e:
+            print(f'DIB logo error: {e}')
 
     GRAD = 150
     for i in range(GRAD):
@@ -180,6 +191,16 @@ def generar_placa(titulo, cintillo, foto_url, is_dib=False, crop_offset=0.5):
 def index():
     return jsonify({'status': 'EDM Placa Generator OK'})
 
+@app.route('/warmup', methods=['GET'])
+def warmup():
+    """Descarga todos los assets y los cachea."""
+    try:
+        ensure_all_assets()
+        assets_ok = {f: os.path.exists(os.path.join(ASSETS_DIR, f)) for f in ASSET_FILES}
+        return jsonify({'status': 'OK', 'assets': assets_ok})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/generar', methods=['POST', 'OPTIONS'])
 def generar():
     if request.method == 'OPTIONS':
@@ -196,9 +217,13 @@ def generar():
         imagen = generar_placa(titulo, cintillo, foto_url, is_dib, crop_offset)
         return send_file(imagen, mimetype='image/jpeg', download_name='placa-edm.jpg')
     except Exception as e:
+        print(f'Error en /generar: {e}')
         return jsonify({'error': str(e)}), 500
 
+# Descargar assets al iniciar
+with app.app_context():
+    ensure_all_assets()
+
 if __name__ == '__main__':
-    download_assets()
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
