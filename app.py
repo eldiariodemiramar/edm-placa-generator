@@ -1,49 +1,28 @@
 from flask import Flask, request, jsonify, send_file
+from flask_cors import CORS
 from PIL import Image, ImageDraw, ImageFont
 import requests
-import textwrap
 import io
 import os
 import numpy as np
 
 app = Flask(__name__)
+CORS(app)
 
-# ── Assets ────────────────────────────────────────────────────────────────────
 ASSETS_DIR = os.path.join(os.path.dirname(__file__), 'assets')
 os.makedirs(ASSETS_DIR, exist_ok=True)
 
-EDM_BASE = 'https://eldiariodemiramar.com.ar'
-RECURSOS = f'{EDM_BASE}/recursos'
+RECURSOS = 'https://eldiariodemiramar.com.ar/recursos'
 
-ASSET_URLS = {
-    'font':      f'{RECURSOS}/LeagueSpartan-Bold.ttf',
-    'logo':      f'{RECURSOS}/Logo-DDM-Blanco-01.png',
-    'redes':     f'{RECURSOS}/pie-redes.png',
-    'dib_logo':  f'{RECURSOS}/dib-logo.png',
+ASSET_FILES = {
+    'LeagueSpartan-Bold.ttf': f'{RECURSOS}/LeagueSpartan-Bold.ttf',
+    'Logo-DDM-Blanco-01.png': f'{RECURSOS}/Logo-DDM-Blanco-01.png',
+    'pie-redes.png':          f'{RECURSOS}/pie-redes.png',
+    'dib-logo.png':           f'{RECURSOS}/dib-logo.png',
 }
 
-def get_asset(name):
-    path = os.path.join(ASSETS_DIR, name)
-    if not os.path.exists(path):
-        url = ASSET_URLS[name.replace('-', '_').replace('.ttf','').replace('.png','')]
-        # Match by key
-        for key, asset_url in ASSET_URLS.items():
-            if asset_url.endswith(name):
-                r = requests.get(asset_url, timeout=15)
-                r.raise_for_status()
-                with open(path, 'wb') as f:
-                    f.write(r.content)
-                break
-    return path
-
 def download_assets():
-    files = {
-        'LeagueSpartan-Bold.ttf': ASSET_URLS['font'],
-        'Logo-DDM-Blanco-01.png': ASSET_URLS['logo'],
-        'pie-redes.png':          ASSET_URLS['redes'],
-        'dib-logo.png':           ASSET_URLS['dib_logo'],
-    }
-    for filename, url in files.items():
+    for filename, url in ASSET_FILES.items():
         path = os.path.join(ASSETS_DIR, filename)
         if not os.path.exists(path):
             try:
@@ -55,7 +34,9 @@ def download_assets():
             except Exception as e:
                 print(f'Failed to download {filename}: {e}')
 
-# ── Placa generator ───────────────────────────────────────────────────────────
+def asset(filename):
+    return os.path.join(ASSETS_DIR, filename)
+
 W, H = 1080, 1440
 AZUL = (1, 65, 109)
 BLANCO = (255, 255, 255)
@@ -114,12 +95,11 @@ def remove_white_bg(img):
     return Image.fromarray(data)
 
 def generar_placa(titulo, cintillo, foto_url, is_dib=False, crop_offset=0.5):
-    font_path = os.path.join(ASSETS_DIR, 'LeagueSpartan-Bold.ttf')
-    logo_path = os.path.join(ASSETS_DIR, 'Logo-DDM-Blanco-01.png')
-    redes_path = os.path.join(ASSETS_DIR, 'pie-redes.png')
-    dib_path   = os.path.join(ASSETS_DIR, 'dib-logo.png')
+    font_path  = asset('LeagueSpartan-Bold.ttf')
+    logo_path  = asset('Logo-DDM-Blanco-01.png')
+    redes_path = asset('pie-redes.png')
+    dib_path   = asset('dib-logo.png')
 
-    # Descargar foto de la nota
     headers = {'User-Agent': 'Mozilla/5.0 (compatible; EDMPublisher/1.0)'}
     r = requests.get(foto_url, headers=headers, timeout=15)
     r.raise_for_status()
@@ -131,7 +111,6 @@ def generar_placa(titulo, cintillo, foto_url, is_dib=False, crop_offset=0.5):
     img = Image.new('RGB', (W, H), AZUL)
     draw = ImageDraw.Draw(img)
 
-    # Foto — 62% del alto
     foto_h = int(H * 0.62)
     ratio = foto.width / foto.height
     new_w = int(foto_h * ratio)
@@ -141,15 +120,13 @@ def generar_placa(titulo, cintillo, foto_url, is_dib=False, crop_offset=0.5):
     foto_r = foto_r.crop((x_off, 0, x_off + W, foto_h))
     img.paste(foto_r, (0, 0))
 
-    # Logo DIB arriba izquierda
     if is_dib and os.path.exists(dib_path):
         dib = remove_white_bg(Image.open(dib_path))
-        dib_h_target = 86
-        dib_w_target = int(dib_h_target * dib.width / dib.height)
-        dib_r = dib.resize((dib_w_target, dib_h_target), Image.LANCZOS)
+        dib_h = 86
+        dib_w = int(dib_h * dib.width / dib.height)
+        dib_r = dib.resize((dib_w, dib_h), Image.LANCZOS)
         img.paste(dib_r, (40, 40), dib_r)
 
-    # Gradiente
     GRAD = 150
     for i in range(GRAD):
         alpha = int(255 * (i / GRAD) ** 0.5)
@@ -161,21 +138,19 @@ def generar_placa(titulo, cintillo, foto_url, is_dib=False, crop_offset=0.5):
     TRACKING = -4
     PIE_Y = H - 155
 
-    # Pastilla sección
     font_tag = ImageFont.truetype(font_path, 58)
     pad_x, pad_y = 34, 16
     text_w = get_tracked_width(draw, cintillo, font_tag, tracking=-2)
     char_bbox = draw.textbbox((0, 0), cintillo, font=font_tag)
-    text_h = char_bbox[3] - char_bbox[1]
+    text_h_tag = char_bbox[3] - char_bbox[1]
     tag_w = text_w + pad_x * 2
-    tag_h = text_h + pad_y * 2
+    tag_h = text_h_tag + pad_y * 2
     tag_y = foto_h - GRAD + int(GRAD * 0.30) - tag_h // 2
     draw.rounded_rectangle([MARGIN, tag_y, MARGIN + tag_w, tag_y + tag_h], radius=30, fill=BLANCO)
     text_x = MARGIN + (tag_w - text_w) // 2
-    text_y_c = tag_y + (tag_h - text_h) // 2 - char_bbox[1]
+    text_y_c = tag_y + (tag_h - text_h_tag) // 2 - char_bbox[1]
     draw_tracked_text(draw, (text_x, text_y_c), cintillo, font_tag, AZUL, tracking=-2)
 
-    # Título
     title_start_y = tag_y + tag_h + 30
     available_h = PIE_Y - 30 - title_start_y
     font_title, lines, lh = fit_title(draw, titulo, TEXT_MAX_W, available_h, font_path, TRACKING)
@@ -185,32 +160,30 @@ def generar_placa(titulo, cintillo, foto_url, is_dib=False, crop_offset=0.5):
         draw_tracked_text(draw, (MARGIN, text_y), line, font_title, BLANCO, TRACKING)
         text_y += lh
 
-    # Logo EDM
     logo_w = 360
-    logo_h = int(logo_w * logo.height / logo.width)
-    logo_r = logo.resize((logo_w, logo_h), Image.LANCZOS)
-    logo_base = PIE_Y + logo_h
+    logo_h_px = int(logo_w * logo.height / logo.width)
+    logo_r = logo.resize((logo_w, logo_h_px), Image.LANCZOS)
+    logo_base = PIE_Y + logo_h_px
     img.paste(logo_r, (MARGIN, PIE_Y), logo_r)
 
-    # Redes
     redes_h = 58
     redes_w = int(redes_h * redes.width / redes.height)
     redes_r = redes.resize((redes_w, redes_h), Image.LANCZOS)
     img.paste(redes_r, (W - MARGIN - redes_w, logo_base - redes_h), redes_r)
 
-    # Convertir a JPG en memoria
     output = io.BytesIO()
     img.convert('RGB').save(output, format='JPEG', quality=95)
     output.seek(0)
     return output
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
 @app.route('/')
 def index():
     return jsonify({'status': 'EDM Placa Generator OK'})
 
-@app.route('/generar', methods=['POST'])
+@app.route('/generar', methods=['POST', 'OPTIONS'])
 def generar():
+    if request.method == 'OPTIONS':
+        return '', 204
     try:
         data = request.get_json()
         titulo      = data.get('titulo', '')
@@ -218,13 +191,10 @@ def generar():
         foto_url    = data.get('foto_url', '')
         is_dib      = data.get('is_dib', False)
         crop_offset = float(data.get('crop_offset', 0.5))
-
         if not titulo or not cintillo or not foto_url:
             return jsonify({'error': 'Faltan datos: titulo, cintillo, foto_url'}), 400
-
         imagen = generar_placa(titulo, cintillo, foto_url, is_dib, crop_offset)
         return send_file(imagen, mimetype='image/jpeg', download_name='placa-edm.jpg')
-
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
