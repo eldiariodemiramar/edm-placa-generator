@@ -13,6 +13,7 @@ ASSETS_DIR = os.path.join(os.path.dirname(__file__), 'assets')
 os.makedirs(ASSETS_DIR, exist_ok=True)
 
 RECURSOS = 'https://eldiariodemiramar.com.ar/recursos'
+EDM_PROXY = 'https://eldiariodemiramar.com.ar/edm-proxy.php'
 
 ASSET_FILES = {
     'LeagueSpartan-Bold.ttf': f'{RECURSOS}/LeagueSpartan-Bold.ttf',
@@ -21,17 +22,28 @@ ASSET_FILES = {
     'dib-logo.png':           f'{RECURSOS}/dib-logo.png',
 }
 
+def download_assets():
+    for filename, url in ASSET_FILES.items():
+        path = os.path.join(ASSETS_DIR, filename)
+        if not os.path.exists(path):
+            try:
+                r = requests.get(url, timeout=15)
+                r.raise_for_status()
+                with open(path, 'wb') as f:
+                    f.write(r.content)
+                print(f'Downloaded: {filename}')
+            except Exception as e:
+                print(f'Failed to download {filename}: {e}')
+
 def ensure_asset(filename):
-    """Descarga un asset si no existe localmente."""
     path = os.path.join(ASSETS_DIR, filename)
     if not os.path.exists(path):
-        url = ASSET_FILES[filename]
-        print(f'Downloading {filename} from {url}...')
-        r = requests.get(url, timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
-        r.raise_for_status()
-        with open(path, 'wb') as f:
-            f.write(r.content)
-        print(f'OK: {filename} ({len(r.content)} bytes)')
+        url = ASSET_FILES.get(filename)
+        if url:
+            r = requests.get(url, timeout=15)
+            r.raise_for_status()
+            with open(path, 'wb') as f:
+                f.write(r.content)
     return path
 
 def ensure_all_assets():
@@ -43,6 +55,33 @@ def ensure_all_assets():
 
 def asset(filename):
     return ensure_asset(filename)
+
+def descargar_imagen(foto_url):
+    """Descarga imagen intentando directo primero, luego via proxy EDM."""
+    headers = {'User-Agent': 'Mozilla/5.0 (compatible; EDMPublisher/1.0)'}
+    
+    # Intento 1: directo
+    try:
+        r = requests.get(foto_url, headers=headers, timeout=15)
+        r.raise_for_status()
+        print(f'Imagen descargada directo: {foto_url}')
+        return r.content
+    except Exception as e:
+        print(f'Descarga directa falló ({e}), intentando via proxy EDM...')
+    
+    # Intento 2: via proxy PHP de EDM
+    try:
+        proxy_url = f'{EDM_PROXY}?url={requests.utils.quote(foto_url, safe="")}'
+        r = requests.get(proxy_url, headers=headers, timeout=15)
+        r.raise_for_status()
+        ct = r.headers.get('content-type', '')
+        if 'image/' in ct:
+            print(f'Imagen descargada via proxy EDM')
+            return r.content
+        else:
+            raise Exception(f'Proxy devolvió content-type: {ct}')
+    except Exception as e:
+        raise Exception(f'No se pudo descargar la imagen: {e}')
 
 W, H = 1080, 1440
 AZUL = (1, 65, 109)
@@ -105,12 +144,9 @@ def generar_placa(titulo, cintillo, foto_url, is_dib=False, crop_offset=0.5):
     font_path  = asset('LeagueSpartan-Bold.ttf')
     logo_path  = asset('Logo-DDM-Blanco-01.png')
     redes_path = asset('pie-redes.png')
-    dib_path   = os.path.join(ASSETS_DIR, 'dib-logo.png')
 
-    headers = {'User-Agent': 'Mozilla/5.0 (compatible; EDMPublisher/1.0)'}
-    r = requests.get(foto_url, headers=headers, timeout=15)
-    r.raise_for_status()
-    foto = Image.open(io.BytesIO(r.content)).convert('RGB')
+    img_data = descargar_imagen(foto_url)
+    foto = Image.open(io.BytesIO(img_data)).convert('RGB')
 
     logo  = Image.open(logo_path).convert('RGBA')
     redes = Image.open(redes_path).convert('RGBA')
@@ -193,7 +229,6 @@ def index():
 
 @app.route('/warmup', methods=['GET'])
 def warmup():
-    """Descarga todos los assets y los cachea."""
     try:
         ensure_all_assets()
         assets_ok = {f: os.path.exists(os.path.join(ASSETS_DIR, f)) for f in ASSET_FILES}
@@ -220,10 +255,138 @@ def generar():
         print(f'Error en /generar: {e}')
         return jsonify({'error': str(e)}), 500
 
-# Descargar assets al iniciar
 with app.app_context():
     ensure_all_assets()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
+
+
+
+def generar_placa_farmacias(fecha_hoy, fecha_manana, farmacias_hoy, farmacias_manana, bg_index=0):
+    font_path = asset('LeagueSpartan-Bold.ttf')
+
+    # Descargar lienzo de Photoshop
+    lienzo_url = f'{RECURSOS}/Farmacias-lienzo.png'
+    lienzo_data = descargar_imagen(lienzo_url)
+    lienzo = Image.open(io.BytesIO(lienzo_data)).convert('RGBA')
+    W_l, H_l = lienzo.size
+
+    # Cargar foto de fondo rotativa
+    canvas = None
+    bg_num = (bg_index % 7) + 1
+    for ext in ['jpg', 'jpeg', 'png', 'webp']:
+        try:
+            bg_url = f'{RECURSOS}/farm-bg-{bg_num:02d}.{ext}'
+            bg_data = descargar_imagen(bg_url)
+            foto = Image.open(io.BytesIO(bg_data)).convert('RGB')
+            ratio = max(W_l/foto.width, H_l/foto.height)
+            new_w, new_h = int(foto.width*ratio), int(foto.height*ratio)
+            foto = foto.resize((new_w, new_h), Image.LANCZOS)
+            x_off = (new_w - W_l) // 2
+            y_off = (new_h - H_l) // 2
+            foto = foto.crop((x_off, y_off, x_off+W_l, y_off+H_l))
+            canvas = foto.convert('RGBA')
+            overlay = Image.new('RGBA', (W_l, H_l), (1, 65, 109, 180))
+            canvas = Image.alpha_composite(canvas, overlay)
+            print(f'Foto de fondo: farm-bg-{bg_num:02d}.{ext}')
+            break
+        except Exception as e:
+            print(f'bg {bg_num}.{ext}: {e}')
+
+    if canvas is None:
+        canvas = Image.new('RGBA', (W_l, H_l), (1, 65, 109, 255))
+
+    # Pegar lienzo encima
+    canvas = Image.alpha_composite(canvas, lienzo)
+    draw = ImageDraw.Draw(canvas)
+
+    BLANCO = (255, 255, 255)
+    CELESTE = (200, 230, 245)
+    MARGIN = 60
+
+    font_fecha   = ImageFont.truetype(font_path, 40)
+    font_nombre  = ImageFont.truetype(font_path, 86)
+    font_detalle = ImageFont.truetype(font_path, 40)
+    font_manana  = ImageFont.truetype(font_path, 34)
+    font_leyenda = ImageFont.truetype(font_path, 30)
+
+    def draw_centered(text, y, font, fill):
+        bbox = draw.textbbox((0,0), text, font=font)
+        x = (W_l - (bbox[2]-bbox[0])) // 2
+        draw.text((x, y), text, font=font, fill=fill)
+        return bbox[3] - bbox[1]
+
+    y = 430
+
+    # Fecha
+    h = draw_centered(fecha_hoy.capitalize(), y, font_fecha, CELESTE)
+    y += h + 36
+
+    # Separador
+    draw.line([(MARGIN, y), (W_l-MARGIN, y)], fill=BLANCO, width=2)
+    y += 32
+
+    # Farmacias de hoy
+    for farm in farmacias_hoy:
+        nombre = farm.get('nombre', '')
+        direccion = farm.get('dir', '')
+        telefono = farm.get('tel', '')
+        box_h = 260
+        draw.rounded_rectangle([MARGIN, y, W_l-MARGIN, y+box_h], radius=20,
+                               outline=(255,255,255), width=1)
+        inner = Image.new('RGBA', (W_l-MARGIN*2-2, box_h-2), (255,255,255,25))
+        canvas.paste(inner, (MARGIN+1, y+1), inner)
+        draw = ImageDraw.Draw(canvas)
+        h = draw_centered(nombre, y+24, font_nombre, BLANCO)
+        ty = y + 24 + h + 12
+        h = draw_centered(direccion, ty, font_detalle, CELESTE)
+        ty += h + 10
+        draw_centered(f"Tel: {telefono}", ty, font_detalle, BLANCO)
+        y += box_h + 22
+
+    # Leyenda horario
+    draw.line([(MARGIN, y), (W_l-MARGIN, y)], fill=BLANCO, width=1)
+    y += 20
+    partes_hoy = fecha_hoy.split()
+    partes_man = fecha_manana.split()
+    h = draw_centered(f"Turnos desde las 9:00 del {partes_hoy[1]} de {' '.join(partes_hoy[2:])}", y, font_leyenda, CELESTE)
+    y += h + 6
+    h = draw_centered(f"hasta las 9:00 del {partes_man[1]} de {' '.join(partes_man[2:])}", y, font_leyenda, CELESTE)
+    y += h + 40
+
+    # Mañana de turno
+    draw.line([(MARGIN, y), (W_l-MARGIN, y)], fill=BLANCO, width=1)
+    y += 24
+    h = draw_centered("MAÑANA DE TURNO:", y, font_manana, CELESTE)
+    y += h + 20
+    for nombre in farmacias_manana:
+        h = draw_centered(nombre, y, font_detalle, BLANCO)
+        y += h + 12
+
+    output = io.BytesIO()
+    canvas.convert('RGB').save(output, format='JPEG', quality=95)
+    output.seek(0)
+    return output
+
+
+@app.route('/generar-farmacias', methods=['POST', 'OPTIONS'])
+def generar_farmacias():
+    if request.method == 'OPTIONS':
+        return '', 204
+    try:
+        data = request.get_json()
+        fecha_hoy      = data.get('fecha_hoy', '')
+        fecha_manana   = data.get('fecha_manana', '')
+        farmacias_hoy  = data.get('farmacias_hoy', [])
+        farmacias_manana = data.get('farmacias_manana', [])
+        if not farmacias_hoy:
+            return jsonify({'error': 'Faltan farmacias_hoy'}), 400
+        from datetime import date
+        bg_index = date.today().timetuple().tm_yday  # rota por día del año
+        imagen = generar_placa_farmacias(fecha_hoy, fecha_manana, farmacias_hoy, farmacias_manana, bg_index)
+        return send_file(imagen, mimetype='image/jpeg', download_name='farmacias-turno.jpg')
+    except Exception as e:
+        print(f'Error en /generar-farmacias: {e}')
+        return jsonify({'error': str(e)}), 500
