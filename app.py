@@ -140,86 +140,84 @@ def remove_white_bg(img):
     data[:,:,3] = np.where(white_mask, 0, a)
     return Image.fromarray(data)
 
-def generar_placa(titulo, cintillo, foto_url, is_dib=False, crop_offset=0.5):
-    font_path  = asset('LeagueSpartan-Bold.ttf')
-    logo_path  = asset('Logo-DDM-Blanco-01.png')
-    redes_path = asset('pie-redes.png')
+# Constantes del lienzo Canva
+TRANSICION_Y = 839   # donde termina la zona de foto
+LOGO_TOP = H - 158   # donde empiezan los logos
+MARGEN_TEXTO = 40    # margen entre cintillo/logos y texto
 
+def generar_placa(titulo, cintillo, foto_url, is_dib=False, crop_offset=0.5):
+    font_path = asset('LeagueSpartan-Bold.ttf')
+
+    # Descargar lienzo máscara
+    lienzo_data = descargar_imagen(f'{RECURSOS}/Lienzo-EDM-01.png')
+    lienzo = Image.open(io.BytesIO(lienzo_data)).convert('RGBA')
+
+    # Descargar foto de la nota
     img_data = descargar_imagen(foto_url)
     foto = Image.open(io.BytesIO(img_data)).convert('RGB')
 
-    logo  = Image.open(logo_path).convert('RGBA')
-    redes = Image.open(redes_path).convert('RGBA')
-
-    img = Image.new('RGB', (W, H), AZUL)
-    draw = ImageDraw.Draw(img)
-
-    foto_h = int(H * 0.62)
+    # Ajustar foto al área del placeholder
     ratio = foto.width / foto.height
-    new_w = int(foto_h * ratio)
-    foto_r = foto.resize((new_w, foto_h), Image.LANCZOS)
+    new_w = int(TRANSICION_Y * ratio)
+    foto_r = foto.resize((new_w, TRANSICION_Y), Image.LANCZOS)
     max_offset = max(0, new_w - W)
     x_off = int(max_offset * crop_offset)
-    foto_r = foto_r.crop((x_off, 0, x_off + W, foto_h))
-    img.paste(foto_r, (0, 0))
+    foto_r = foto_r.crop((x_off, 0, x_off + W, TRANSICION_Y))
 
+    # Canvas: foto arriba, azul abajo
+    canvas = Image.new('RGB', (W, H), AZUL)
+    canvas.paste(foto_r, (0, 0))
+
+    # Logo DIB arriba izquierda (si es nota DIB)
     if is_dib:
         try:
-            dib_path = asset('dib-logo.png')
-            dib = remove_white_bg(Image.open(dib_path))
+            dib_data = descargar_imagen(f'{RECURSOS}/dib-logo.png')
+            dib = remove_white_bg(Image.open(io.BytesIO(dib_data)))
             dib_h = 86
             dib_w = int(dib_h * dib.width / dib.height)
             dib_r = dib.resize((dib_w, dib_h), Image.LANCZOS)
-            img.paste(dib_r, (40, 40), dib_r)
+            canvas_rgba = canvas.convert('RGBA')
+            canvas_rgba.paste(dib_r, (40, 40), dib_r)
+            canvas = canvas_rgba.convert('RGB')
         except Exception as e:
             print(f'DIB logo error: {e}')
 
-    GRAD = 150
-    for i in range(GRAD):
-        alpha = int(255 * (i / GRAD) ** 0.5)
-        overlay = Image.new('RGBA', (W, 1), (*AZUL, alpha))
-        img.paste(overlay, (0, foto_h - GRAD + i), overlay)
+    # Pegar lienzo máscara (transparente en zona foto, sólido en zona azul+logos)
+    canvas_rgba = canvas.convert('RGBA')
+    canvas_rgba = Image.alpha_composite(canvas_rgba, lienzo)
+    canvas = canvas_rgba.convert('RGB')
+    draw = ImageDraw.Draw(canvas)
 
     MARGIN = 55
-    TEXT_MAX_W = W - MARGIN * 2
-    TRACKING = -4
-    PIE_Y = H - 155
-
     font_tag = ImageFont.truetype(font_path, 58)
+
+    # Cintillo centrado en TRANSICION_Y
     pad_x, pad_y = 34, 16
-    text_w = get_tracked_width(draw, cintillo, font_tag, tracking=-2)
     char_bbox = draw.textbbox((0, 0), cintillo, font=font_tag)
+    text_w = char_bbox[2] - char_bbox[0]
     text_h_tag = char_bbox[3] - char_bbox[1]
     tag_w = text_w + pad_x * 2
     tag_h = text_h_tag + pad_y * 2
-    tag_y = foto_h - GRAD + int(GRAD * 0.30) - tag_h // 2
+    tag_y = TRANSICION_Y - tag_h // 2
     draw.rounded_rectangle([MARGIN, tag_y, MARGIN + tag_w, tag_y + tag_h], radius=30, fill=BLANCO)
     text_x = MARGIN + (tag_w - text_w) // 2
     text_y_c = tag_y + (tag_h - text_h_tag) // 2 - char_bbox[1]
-    draw_tracked_text(draw, (text_x, text_y_c), cintillo, font_tag, AZUL, tracking=-2)
+    draw.text((text_x, text_y_c), cintillo, font=font_tag, fill=AZUL)
 
-    title_start_y = tag_y + tag_h + 30
-    available_h = PIE_Y - 30 - title_start_y
-    font_title, lines, lh = fit_title(draw, titulo, TEXT_MAX_W, available_h, font_path, TRACKING)
-    total_text_h = lh * len(lines)
-    text_y = title_start_y + (available_h - total_text_h) // 2
+    # Área de texto: desde pie del cintillo hasta logos, alineado arriba
+    cintillo_bottom = tag_y + tag_h
+    texto_top = cintillo_bottom + MARGEN_TEXTO
+    available_h = LOGO_TOP - MARGEN_TEXTO - texto_top
+
+    # Título con tamaño automático, alineado desde arriba
+    font_title, lines, lh = fit_title(draw, titulo, W - MARGIN * 2, available_h, font_path, tracking=-4)
+    ty = texto_top
     for line in lines:
-        draw_tracked_text(draw, (MARGIN, text_y), line, font_title, BLANCO, TRACKING)
-        text_y += lh
-
-    logo_w = 360
-    logo_h_px = int(logo_w * logo.height / logo.width)
-    logo_r = logo.resize((logo_w, logo_h_px), Image.LANCZOS)
-    logo_base = PIE_Y + logo_h_px
-    img.paste(logo_r, (MARGIN, PIE_Y), logo_r)
-
-    redes_h = 58
-    redes_w = int(redes_h * redes.width / redes.height)
-    redes_r = redes.resize((redes_w, redes_h), Image.LANCZOS)
-    img.paste(redes_r, (W - MARGIN - redes_w, logo_base - redes_h), redes_r)
+        draw_tracked_text(draw, (MARGIN, ty), line, font_title, BLANCO, -4)
+        ty += lh
 
     output = io.BytesIO()
-    img.convert('RGB').save(output, format='JPEG', quality=95)
+    canvas.convert('RGB').save(output, format='JPEG', quality=95)
     output.seek(0)
     return output
 
