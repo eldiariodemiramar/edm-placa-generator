@@ -288,15 +288,14 @@ def generar_placa_farmacias(fecha_hoy, fecha_manana, farmacias_hoy, farmacias_ma
             y_off = (new_h - H_l) // 2
             foto = foto.crop((x_off, y_off, x_off+W_l, y_off+H_l))
             canvas = foto.convert('RGBA')
-            overlay = Image.new('RGBA', (W_l, H_l), (1, 65, 109, 180))
-            canvas = Image.alpha_composite(canvas, overlay)
             print(f'Foto de fondo: farm-bg-{bg_num:02d}.{ext}')
             break
         except Exception as e:
             print(f'bg {bg_num}.{ext}: {e}')
 
     if canvas is None:
-        canvas = Image.new('RGBA', (W_l, H_l), (1, 65, 109, 255))
+        # Sin foto: fondo azul sólido como fallback
+        canvas = Image.new('RGBA', (W_l, H_l), (20, 50, 80, 255))
 
     # Pegar lienzo encima
     canvas = Image.alpha_composite(canvas, lienzo)
@@ -333,13 +332,13 @@ def generar_placa_farmacias(fecha_hoy, fecha_manana, farmacias_hoy, farmacias_ma
         nombre = farm.get('nombre', '')
         direccion = farm.get('dir', '')
         telefono = farm.get('tel', '')
-        box_h = 260
+        box_h = 310
         draw.rounded_rectangle([MARGIN, y, W_l-MARGIN, y+box_h], radius=20,
                                outline=(255,255,255), width=1)
-        inner = Image.new('RGBA', (W_l-MARGIN*2-2, box_h-2), (255,255,255,25))
+        inner = Image.new('RGBA', (W_l-MARGIN*2-2, box_h-2), (255,255,255,30))
         canvas.paste(inner, (MARGIN+1, y+1), inner)
         draw = ImageDraw.Draw(canvas)
-        h = draw_centered(nombre, y+24, font_nombre, BLANCO)
+        h = draw_centered(nombre, y+36, font_nombre, BLANCO)
         ty = y + 24 + h + 12
         h = draw_centered(direccion, ty, font_detalle, CELESTE)
         ty += h + 10
@@ -351,9 +350,13 @@ def generar_placa_farmacias(fecha_hoy, fecha_manana, farmacias_hoy, farmacias_ma
     y += 20
     partes_hoy = fecha_hoy.split()
     partes_man = fecha_manana.split()
-    h = draw_centered(f"Turnos desde las 9:00 del {partes_hoy[1]} de {' '.join(partes_hoy[2:])}", y, font_leyenda, CELESTE)
+    # partes_hoy: ['lunes', '6', 'de', 'julio', 'de', '2026']
+    # Formato: "6 de julio de 2026"
+    fecha_hoy_fmt = ' '.join(partes_hoy[1:])   # "6 de julio de 2026"
+    fecha_man_fmt = ' '.join(partes_man[1:])   # "7 de julio de 2026"
+    h = draw_centered(f"Turnos desde las 9:00 del {fecha_hoy_fmt}", y, font_leyenda, CELESTE)
     y += h + 6
-    h = draw_centered(f"hasta las 9:00 del {partes_man[1]} de {' '.join(partes_man[2:])}", y, font_leyenda, CELESTE)
+    h = draw_centered(f"hasta las 9:00 del {fecha_man_fmt}", y, font_leyenda, CELESTE)
     y += h + 40
 
     # Mañana de turno
