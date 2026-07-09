@@ -191,10 +191,10 @@ def generar_placa(titulo, cintillo, foto_url, is_dib=False, crop_offset=0.5):
     MARGIN = 55
     font_tag = ImageFont.truetype(font_path, 58)
 
-    # Cintillo centrado en TRANSICION_Y
+    # Cintillo centrado en TRANSICION_Y — tracking -4px igual que el título
     pad_x, pad_y = 34, 16
+    text_w = get_tracked_width(draw, cintillo, font_tag, tracking=-4)
     char_bbox = draw.textbbox((0, 0), cintillo, font=font_tag)
-    text_w = char_bbox[2] - char_bbox[0]
     text_h_tag = char_bbox[3] - char_bbox[1]
     tag_w = text_w + pad_x * 2
     tag_h = text_h_tag + pad_y * 2
@@ -202,7 +202,7 @@ def generar_placa(titulo, cintillo, foto_url, is_dib=False, crop_offset=0.5):
     draw.rounded_rectangle([MARGIN, tag_y, MARGIN + tag_w, tag_y + tag_h], radius=30, fill=BLANCO)
     text_x = MARGIN + (tag_w - text_w) // 2
     text_y_c = tag_y + (tag_h - text_h_tag) // 2 - char_bbox[1]
-    draw.text((text_x, text_y_c), cintillo, font=font_tag, fill=AZUL)
+    draw_tracked_text(draw, (text_x, text_y_c), cintillo, font_tag, AZUL, tracking=-4)
 
     # Área de texto: desde pie del cintillo hasta logos, alineado arriba
     cintillo_bottom = tag_y + tag_h
