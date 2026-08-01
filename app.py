@@ -156,13 +156,19 @@ def generar_placa(titulo, cintillo, foto_url, is_dib=False, crop_offset=0.5):
     img_data = descargar_imagen(foto_url)
     foto = Image.open(io.BytesIO(img_data)).convert('RGB')
 
-    # Ajustar foto al área del placeholder
-    ratio = foto.width / foto.height
-    new_w = int(TRANSICION_Y * ratio)
-    foto_r = foto.resize((new_w, TRANSICION_Y), Image.LANCZOS)
-    max_offset = max(0, new_w - W)
-    x_off = int(max_offset * crop_offset)
-    foto_r = foto_r.crop((x_off, 0, x_off + W, TRANSICION_Y))
+    # Ajustar foto al área del placeholder — siempre cubrir todo el ancho y alto
+    # Escalar para que cubra W x TRANSICION_Y sin franjas negras (cover)
+    scale_by_w = W / foto.width
+    scale_by_h = TRANSICION_Y / foto.height
+    scale = max(scale_by_w, scale_by_h)  # usar la escala mayor para cubrir todo
+    new_w = int(foto.width * scale)
+    new_h = int(foto.height * scale)
+    foto_r = foto.resize((new_w, new_h), Image.LANCZOS)
+    # Recortar centrando con crop_offset horizontal
+    max_x_off = max(0, new_w - W)
+    x_off = int(max_x_off * crop_offset)
+    y_off = max(0, (new_h - TRANSICION_Y) // 2)  # centrado vertical
+    foto_r = foto_r.crop((x_off, y_off, x_off + W, y_off + TRANSICION_Y))
 
     # Canvas: foto arriba, azul abajo
     canvas = Image.new('RGB', (W, H), AZUL)
